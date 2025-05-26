@@ -1,0 +1,3 @@
+
+${STATUS_EMOJI} Job `${JOB_NAME}` #${BUILD_NUMBER} ha ${STATUS_TEXT}.
+<${BUILD_URL}|Ver detalles>
