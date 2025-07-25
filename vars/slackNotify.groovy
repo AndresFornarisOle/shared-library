@@ -1,14 +1,16 @@
 def call(Map config = [:]) {
-    def channel    = config.channel ?: '#tech-deploys'
-    def color      = config.color ?: 'good'
-    def includeLog = config.includeLog ?: false
-    def result     = currentBuild.currentResult ?: 'UNKNOWN'
-    def buildUrl   = env.BUILD_URL ?: ''
-    def jobName    = env.JOB_NAME ?: ''
-    def buildNumber = env.BUILD_NUMBER ?: ''
-    def triggeredBy = "Sistema"
-    def emoji = ":robot_face:"
+    def channel      = config.channel ?: '#tech-deploys'
+    def color        = config.color ?: 'good'
+    def includeLog   = config.includeLog ?: false
+    def showStatus   = config.get('showStatus', true)  // Nuevo flag
+    def buildUrl     = env.BUILD_URL ?: ''
+    def jobName      = env.JOB_NAME ?: ''
+    def buildNumber  = env.BUILD_NUMBER ?: ''
+    def result       = currentBuild.currentResult ?: 'UNKNOWN'
+    def triggeredBy  = "Sistema"
+    def emoji        = ":robot_face:"
 
+    // Determinar quién lo ejecutó
     try {
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
@@ -25,7 +27,14 @@ def call(Map config = [:]) {
         triggeredBy = "Desconocido"
     }
 
-    def message = "*${emoji} ${jobName}* #${buildNumber} terminó con estado: *${result}*"
+    // Armar mensaje
+    def message = "*${emoji} ${jobName}* #${buildNumber}"
+
+    if (showStatus) {
+        message += " terminó con estado: *${result}*"
+    } else {
+        message += " ha iniciado"
+    }
 
     if (includeLog && result == 'FAILURE') {
         try {
@@ -38,8 +47,7 @@ def call(Map config = [:]) {
         }
     }
 
-    message += "\n👤 Desplegado por: *${triggeredBy}*"
-    message += " (<${buildUrl}|Ver ejecución>)"
+    message += "\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
     slackSend(
         channel: channel,
