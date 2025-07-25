@@ -1,10 +1,10 @@
 def call(Map config = [:]) {
-    def channel    = config.channel ?: '#tech-deploys'
-    def color      = config.color ?: 'good'
-    def includeLog = config.includeLog ?: false
-    def result     = currentBuild.currentResult ?: 'UNKNOWN'
-    def buildUrl   = env.BUILD_URL ?: ''
-    def jobName    = env.JOB_NAME ?: ''
+    def channel     = config.channel ?: '#tech-deploys'
+    def color       = config.color ?: 'good'
+    def includeLog  = config.includeLog ?: false
+    def result      = currentBuild.currentResult ?: 'UNKNOWN'
+    def buildUrl    = env.BUILD_URL ?: ''
+    def jobName     = env.JOB_NAME ?: ''
     def buildNumber = env.BUILD_NUMBER ?: ''
 
     def cause = currentBuild.rawBuild.getCauses().find { true }
@@ -32,7 +32,7 @@ def call(Map config = [:]) {
     if (includeLog && result == 'FAILURE') {
         try {
             def rawLog = currentBuild.rawBuild.getLog(100)
-            def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|fail)/ }
+            def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|fail|trace)/ }
             def logSnippet = errorLines ? errorLines.join('\n') : rawLog.takeRight(20).join('\n')
             message += "\n```" + logSnippet.take(1000) + "```"
         } catch (e) {
