@@ -2,7 +2,7 @@ def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
     def includeLog   = config.includeLog ?: false
-    def showStatus   = config.get('showStatus', true)  // Flag para diferenciar inicio/fin
+    def showStatus   = config.get('showStatus', true)
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
     def buildNumber  = env.BUILD_NUMBER ?: ''
@@ -35,18 +35,18 @@ def call(Map config = [:]) {
         result = currentBuild.currentResult ?: 'UNKNOWN'
         message += " terminó con estado: *${result}*"
 
-        // Calcular duración SOLO al finalizar
+        // Calcular duración de forma segura
         if (result in ['SUCCESS', 'FAILURE', 'UNSTABLE']) {
-            def durationMs = (currentBuild.duration ?: 0).toLong()  // Convertir a long
-            def minutes = (durationMs / 1000 / 60) as int
-            def seconds = ((durationMs / 1000) % 60) as int
+            long durationMs = (currentBuild.duration ?: 0L) as long
+            int minutes = (durationMs / 1000 / 60) as int
+            int seconds = ((durationMs / 1000) - (minutes * 60)) as int
             durationStr = "\n⏱️ *Duración:* ${minutes}m ${seconds}s"
         }
     } else {
         message += " ha iniciado"
     }
 
-    // Logs en caso de fallo
+    // Logs de error si falla
     if (includeLog && result == 'FAILURE') {
         try {
             def rawLog = currentBuild.rawBuild.getLog(100)
@@ -58,10 +58,9 @@ def call(Map config = [:]) {
         }
     }
 
-    // Agregar info de quién lo disparó y duración
     message += "${durationStr}\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
-    // Enviar mensaje a Slack
+    // Enviar notificación a Slack
     slackSend(
         channel: channel,
         color: color,
