@@ -9,13 +9,11 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🔑 Detectar inicio usando flag global
+    // 🔑 Detectar inicio
     def isStart = (env.PIPELINE_STARTED == null)
-    if (isStart) {
-        env.PIPELINE_STARTED = "true" // Seteamos el flag solo en la primera llamada
-    }
+    if (isStart) env.PIPELINE_STARTED = "true"
 
-    // 🕑 Calcular duración solo si no es inicio
+    // 🕑 Calcular duración
     def buildDuration = ""
     if (!isStart && result != 'UNKNOWN') {
         def durationMillis = currentBuild.duration ?: 0
@@ -40,7 +38,7 @@ def call(Map config = [:]) {
         triggeredBy = "Desconocido"
     }
 
-    // 📝 Construir mensaje según el caso
+    // 📝 Mensaje inicial/final
     def message = ""
     if (isStart) {
         message = ":rocket: *${jobName}* #${buildNumber} ha iniciado\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
@@ -50,46 +48,36 @@ def call(Map config = [:]) {
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
-    // 🔎 Logs y detección de etapa fallida
+    // 🔎 Extraer primera etapa fallida y logs del error
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            // ✅ Detectar la PRIMERA etapa fallida
-            def failedStage = "Desconocida"
-            def flowGraph = currentBuild.rawBuild.getExecution().getCurrentHeads()[0].getExecution().getNodes()
-            def stageNodes = flowGraph.findAll { it.displayFunctionName == 'Stage' }
-            for (node in stageNodes) {
-                def execActions = node.getActions(hudson.model.ErrorAction)
-                if (!execActions.isEmpty()) {
-                    failedStage = node.getDisplayName()
-                    break
-                }
-            }
+            def rawLog = currentBuild.rawBuild.getLog(5000)
 
-            // ✅ Extraer logs del error (primer a último match)
-            def rawLog = currentBuild.rawBuild.getLog(4000)
+            // Detectar la primera etapa fallida
+            def failedStageLine = rawLog.find { it =~ /Stage "(.+)" failed/ }
+            def failedStage = failedStageLine ? (failedStageLine =~ /Stage "(.+)" failed/)[0][1] : "No detectada"
+
+            // Buscar el primer error relevante
             def errorPattern = ~/(?i)(error|exception|failed|traceback|unknown revision)/
-            def matches = rawLog.findIndexValues { it =~ errorPattern }
+            def firstErrorIndex = rawLog.findIndexOf { it =~ errorPattern }
 
-            if (!matches.isEmpty()) {
-                def firstErrorIndex = matches.first()
-                def lastErrorIndex = matches.last()
+            if (firstErrorIndex != -1) {
                 def start = Math.max(0, firstErrorIndex - 10)
-                def end = Math.min(rawLog.size() - 1, lastErrorIndex + 30)
-
+                def end = Math.min(rawLog.size() - 1, firstErrorIndex + 40)
                 message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
-                message += "\n```🔎 Error detectado:\n${rawLog[start..end].join('\n').take(3000)}\n```"
+                message += "\n```🔎 Primer error detectado:\n${rawLog[start..end].join('\n').take(3000)}\n```"
             } else {
                 message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
-                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(150).join('\n')}```"
+                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(120).join('\n')}```"
             }
         } catch (e) {
-            message += "\n_(No se pudo extraer el log de error ni la etapa fallida)_"
+            message += "\n_(No se pudo extraer el log ni la etapa fallida)_"
         }
     }
 
     // 🎨 Color según estado
     if (isStart) {
-        color = "#FBBF24" // Amarillo para inicio
+        color = "#FBBF24"
     } else if (result == 'FAILURE') {
         color = "danger"
     } else if (result == 'ABORTED') {
@@ -99,9 +87,5 @@ def call(Map config = [:]) {
     }
 
     // 📢 Enviar a Slack
-    slackSend(
-        channel: channel,
-        color: color,
-        message: message
-    )
+    slackSend(channel: channel, color: color, message: message)
 }
