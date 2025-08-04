@@ -9,8 +9,11 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // Detectar inicio automáticamente si duración < 1s y SUCCESS
-    def isStart = (currentBuild.duration < 1000 && result == 'SUCCESS')
+    // 🔑 Detectar inicio usando flag global
+    def isStart = (env.PIPELINE_STARTED == null)
+    if (isStart) {
+        env.PIPELINE_STARTED = "true"  // Seteamos el flag solo en la primera llamada
+    }
 
     // 🕑 Calcular duración solo si no es inicio
     def buildDuration = ""
