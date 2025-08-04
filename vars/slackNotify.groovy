@@ -1,66 +1,88 @@
-def call(Map config = [:]) {
-    def channel      = config.channel ?: '#tech-deploys'
-    def color        = config.color ?: 'good'
-    def includeLog   = config.includeLog != null ? config.includeLog : true  // 🔥 Ahora por defecto siempre true
-    def buildUrl     = env.BUILD_URL ?: ''
-    def jobName      = env.JOB_NAME ?: ''
-    def buildNumber  = env.BUILD_NUMBER ?: ''
-    def result       = currentBuild.currentResult ?: 'UNKNOWN'
-    def triggeredBy  = "Sistema"
-    def emoji        = ":robot_face:"
+@Library('shared-library') _
 
-    // Determinar quién lo ejecutó
-    try {
-        def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
-        if (userCause) {
-            triggeredBy = userCause.userName
-            emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":bust_in_silhouette:"
-        } else {
-            def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
-            if (gitAuthor) {
-                triggeredBy = "Git Push por ${gitAuthor}"
-                emoji = ":octocat:"
-            }
+pipeline {
+  agent any
+
+  environment {
+    DEPLOY_REGION     = 'us-east-1'
+    AWS_S3_BUCKET     = 'ole-web-widget'
+    SOURCE_DIR        = 'dist'
+    DISTRIBUTION_ID   = 'EEEPLHJL4DKP2'
+    SLACK_CHANNEL     = '#tech-deploys'
+  }
+
+  stages {
+    stage('Inicio') {
+      steps {
+        script {
+          slackNotify(
+            channel: SLACK_CHANNEL,
+            color: '#FBBF24',
+            showStatus: false, // 🔥 Evita "SUCCESS" al inicio
+            message: ":rocket: *Desplegando `${env.JOB_NAME}`* (Build #${env.BUILD_NUMBER}) en `${DEPLOY_REGION}`\n🔗 <${env.BUILD_URL}|Ver detalles>"
+          )
         }
-    } catch (e) {
-        triggeredBy = "Desconocido"
+      }
     }
 
-    // Detectar si el build está iniciando
-    def isBuilding = (currentBuild.result == null || (currentBuild.result == 'SUCCESS' && currentBuild.duration == 0))
-
-    // Construir mensaje principal
-    def message = "*${emoji} ${jobName}* #${buildNumber}"
-    if (isBuilding) {
-        message += " ha iniciado"
-    } else {
-        message += " terminó con estado: *${result}*"
-
-        // Calcular duración
-        def durationSeconds = (currentBuild.duration ?: 0) / 1000
-        def minutes = (int)(durationSeconds / 60)
-        def seconds = (int)(durationSeconds % 60)
-        message += "\n:stopwatch: Duración: ${minutes}m ${seconds}s"
-    }
-
-    // Mostrar errores si falla y está habilitado includeLog (true por defecto)
-    if (result == 'FAILURE' && includeLog) {
-        try {
-            def rawLog = currentBuild.rawBuild.getLog(200)
-            def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|fail)/ }
-            def logSnippet = errorLines ? errorLines.join('\n') : rawLog.takeRight(20).join('\n')
-            message += "\n```" + logSnippet.take(1000) + "```"
-        } catch (e) {
-            message += "\n_(No se pudo extraer el log de error)_"
+    stage('Build Docker Image') {
+      steps {
+        script {
+          echo '🐳 Construyendo imagen Docker...'
+          sh 'docker build --no-cache -t react-deploy .'
         }
+      }
     }
 
-    message += "\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
+    stage('Build y Deploy a S3') {
+      steps {
+        withCredentials([
+          [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials-global', accessKeyVariable: 'AWS_AK', secretKeyVariable: 'AWS_SK']
+        ]) {
+          script {
+            sh '''
+              docker run --rm \
+                -v $PWD:/app \
+                -w /app \
+                -e AWS_ACCESS_KEY_ID=$AWS_AK \
+                -e AWS_SECRET_ACCESS_KEY=$AWS_SK \
+                -e AWS_DEFAULT_REGION=$DEPLOY_REGION \
+                react-deploy bash -c "
+                  echo '📦 Instalando dependencias y compilando...'
+                  npm install --legacy-peer-deps
+                  npm run build
+                  echo '📤 Subiendo a S3...'
+                  aws s3 sync $SOURCE_DIR s3://$AWS_S3_BUCKET --delete --region $DEPLOY_REGION
+                  echo '🧹 Invalidando caché de CloudFront...'
+                  aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths '/*'
+                "
+            '''
+          }
+        }
+      }
+    }
+  }
 
-    // Enviar a Slack
-    slackSend(
-        channel: channel,
-        color: (isBuilding ? '#FBBF24' : (result == 'FAILURE' ? '#FF0000' : color)),
-        message: message
-    )
+  post {
+    success {
+      script {
+        slackNotify(
+          channel: SLACK_CHANNEL,
+          color: "good",
+          message: "✅ *Despliegue exitoso* en `${DEPLOY_REGION}` para `${env.JOB_NAME}` (Build #${env.BUILD_NUMBER})"
+        )
+      }
+    }
+
+    failure {
+      script {
+        slackNotify(
+          channel: SLACK_CHANNEL,
+          color: "danger",
+          includeLog: true, // 🔥 Incluye errores
+          message: "❌ *Despliegue fallido* en `${DEPLOY_REGION}` para `${env.JOB_NAME}` (Build #${env.BUILD_NUMBER})"
+        )
+      }
+    }
+  }
 }
