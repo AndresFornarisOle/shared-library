@@ -52,15 +52,14 @@ def call(Map config = [:]) {
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
             def rawLog = currentBuild.rawBuild.getLog(8000) // más líneas
-
-            // 1️⃣ Buscar línea que indique etapa saltada
-            def skipIndex = rawLog.findIndexOf { it =~ /Stage ".+" skipped due to earlier failure/ }
             def failedStage = "No detectada"
 
+            // 1️⃣ Buscar primera ocurrencia de "skipped due to earlier failure"
+            def skipIndex = rawLog.findIndexOf { it =~ /skipped due to earlier failure/ }
             if (skipIndex > 0) {
-                // Buscar la línea previa que tenga "Stage (X)"
+                // Buscar hacia atrás la última línea con formato "[Pipeline] { (StageName)"
                 for (int i = skipIndex - 1; i >= 0; i--) {
-                    def match = (rawLog[i] =~ /Stage "(.+)"/)
+                    def match = (rawLog[i] =~ /\[Pipeline\] \{ \((.+)\)/)
                     if (match) {
                         failedStage = match[0][1]
                         break
