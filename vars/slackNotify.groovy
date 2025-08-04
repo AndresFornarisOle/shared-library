@@ -1,15 +1,13 @@
 def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
-    def includeLog   = config.includeLog ?: false
-    def showStatus   = config.get('showStatus', true)
+    def includeLog   = config.includeLog != null ? config.includeLog : true  // 🔥 Ahora por defecto siempre true
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
     def buildNumber  = env.BUILD_NUMBER ?: ''
     def result       = currentBuild.currentResult ?: 'UNKNOWN'
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
-    def durationStr  = ""
 
     // Determinar quién lo ejecutó
     try {
@@ -28,28 +26,27 @@ def call(Map config = [:]) {
         triggeredBy = "Desconocido"
     }
 
-    // Mensaje base
-    def message = "*${emoji} ${jobName}* #${buildNumber}"
+    // Detectar si el build está iniciando
+    def isBuilding = (currentBuild.result == null || (currentBuild.result == 'SUCCESS' && currentBuild.duration == 0))
 
-    if (showStatus) {
-        result = currentBuild.currentResult ?: 'UNKNOWN'
+    // Construir mensaje principal
+    def message = "*${emoji} ${jobName}* #${buildNumber}"
+    if (isBuilding) {
+        message += " ha iniciado"
+    } else {
         message += " terminó con estado: *${result}*"
 
-        // Calcular duración de forma segura
-        if (result in ['SUCCESS', 'FAILURE', 'UNSTABLE']) {
-            long durationMs = (currentBuild.duration ?: 0L) as long
-            int minutes = (durationMs / 1000 / 60) as int
-            int seconds = ((durationMs / 1000) - (minutes * 60)) as int
-            durationStr = "\n⏱️ *Duración:* ${minutes}m ${seconds}s"
-        }
-    } else {
-        message += " ha iniciado"
+        // Calcular duración
+        def durationSeconds = (currentBuild.duration ?: 0) / 1000
+        def minutes = (int)(durationSeconds / 60)
+        def seconds = (int)(durationSeconds % 60)
+        message += "\n:stopwatch: Duración: ${minutes}m ${seconds}s"
     }
 
-    // Logs de error si falla
-    if (includeLog && result == 'FAILURE') {
+    // Mostrar errores si falla y está habilitado includeLog (true por defecto)
+    if (result == 'FAILURE' && includeLog) {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(100)
+            def rawLog = currentBuild.rawBuild.getLog(200)
             def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|fail)/ }
             def logSnippet = errorLines ? errorLines.join('\n') : rawLog.takeRight(20).join('\n')
             message += "\n```" + logSnippet.take(1000) + "```"
@@ -58,12 +55,12 @@ def call(Map config = [:]) {
         }
     }
 
-    message += "${durationStr}\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
+    message += "\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
-    // Enviar notificación a Slack
+    // Enviar a Slack
     slackSend(
         channel: channel,
-        color: color,
+        color: (isBuilding ? '#FBBF24' : (result == 'FAILURE' ? '#FF0000' : color)),
         message: message
     )
 }
