@@ -48,26 +48,33 @@ def call(Map config = [:]) {
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
-    // 🔎 Extraer PRIMERA etapa fallida + raíz del error real
+    // 🔎 Extraer PRIMERA etapa fallida y error raíz
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(8000) // más líneas
+            def rawLog = currentBuild.rawBuild.getLog(8000)
             def failedStage = "No detectada"
 
-            // 1️⃣ Buscar primera ocurrencia de "skipped due to earlier failure"
+            // 1️⃣ Detectar primera ocurrencia de "skipped"
             def skipIndex = rawLog.findIndexOf { it =~ /skipped due to earlier failure/ }
             if (skipIndex > 0) {
-                // Buscar hacia atrás la última línea con formato "[Pipeline] { (StageName)"
+                // Buscar las dos últimas líneas con formato de etapa antes de skip
+                def stagesFound = []
                 for (int i = skipIndex - 1; i >= 0; i--) {
                     def match = (rawLog[i] =~ /\[Pipeline\] \{ \((.+)\)/)
                     if (match) {
-                        failedStage = match[0][1]
-                        break
+                        stagesFound << match[0][1]
+                        if (stagesFound.size() == 2) break
                     }
+                }
+                // Tomar la inmediatamente anterior (segunda encontrada)
+                if (stagesFound.size() >= 2) {
+                    failedStage = stagesFound[1]
+                } else if (stagesFound) {
+                    failedStage = stagesFound[0]
                 }
             }
 
-            // 2️⃣ Buscar la ÚLTIMA ocurrencia de error real
+            // 2️⃣ Buscar error raíz (última ocurrencia relevante)
             def errorPattern = ~/(?i)(unknown revision|error:|exception|failed|traceback)/
             def allErrors = rawLog.findIndexValues { it =~ errorPattern }
             def errorIndex = allErrors ? allErrors.last() : -1
