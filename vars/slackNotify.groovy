@@ -9,10 +9,10 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🔥 Detectar si es inicio: en progreso y sin resultado final
-    def isStartMsg = currentBuild.inProgress && (result == 'SUCCESS' || result == 'UNKNOWN')
+    // 🔥 Detectar inicio: duración 0 y sin resultado definitivo
+    def isStartMsg = (currentBuild.duration == 0 && result in ['SUCCESS', 'UNKNOWN'])
 
-    // 🕑 Duración solo si es final
+    // 🕑 Duración solo para mensajes finales
     def buildDuration = ""
     if (!isStartMsg && result != 'UNKNOWN') {
         def durationMillis = currentBuild.duration ?: 0
@@ -20,7 +20,7 @@ def call(Map config = [:]) {
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
-    // 👤 Determinar ejecutor
+    // 👤 Determinar quién disparó el pipeline
     try {
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
@@ -67,7 +67,7 @@ def call(Map config = [:]) {
         }
     }
 
-    // 👤 Autor
+    // 👤 Autor del despliegue
     message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
     slackSend(
