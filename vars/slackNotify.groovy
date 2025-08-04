@@ -9,10 +9,10 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🔑 Detectar inicio usando flag global persistente
+    // 🔑 Detectar inicio usando flag global
     def isStart = (env.PIPELINE_STARTED == null)
     if (isStart) {
-        env.PIPELINE_STARTED = "true"  // Se marca solo la primera vez
+        env.PIPELINE_STARTED = "true" // Seteamos el flag solo en la primera llamada
     }
 
     // 🕑 Calcular duración solo si no es inicio
@@ -28,12 +28,12 @@ def call(Map config = [:]) {
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
             triggeredBy = userCause.userName
-            emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":adult:"
+            emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":bust_in_silhouette:"
         } else {
             def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
             if (gitAuthor) {
                 triggeredBy = "Git Push por ${gitAuthor}"
-                emoji = ":bust_in_silhouette:"
+                emoji = ":male-technologist:"
             }
         }
     } catch (e) {
@@ -50,23 +50,40 @@ def call(Map config = [:]) {
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
-    // 🔎 Extraer logs si falla (PRIMER error encontrado)
+    // 🔎 Logs y detección de etapa fallida
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(3000) // 🔥 más líneas
-            def keywords = [~/(?i)error/, ~/(?i)exception/, ~/(?i)failed/, ~/(?i)traceback/, ~/(?i)unknown revision/]
+            // ✅ Detectar la PRIMERA etapa fallida
+            def failedStage = "Desconocida"
+            def flowGraph = currentBuild.rawBuild.getExecution().getCurrentHeads()[0].getExecution().getNodes()
+            def stageNodes = flowGraph.findAll { it.displayFunctionName == 'Stage' }
+            for (node in stageNodes) {
+                def execActions = node.getActions(hudson.model.ErrorAction)
+                if (!execActions.isEmpty()) {
+                    failedStage = node.getDisplayName()
+                    break
+                }
+            }
 
-            def errorIndex = rawLog.findIndexOf { line -> keywords.any { pattern -> line =~ pattern } }
-            if (errorIndex != -1) {
-                def start = Math.max(0, errorIndex - 15) // contexto previo
-                def end = Math.min(rawLog.size() - 1, errorIndex + 25) // contexto posterior
-                def errorSnippet = rawLog[start..end].join('\n').take(2000)
-                message += "\n```🔎 Primer error detectado:\n${errorSnippet}\n```"
+            // ✅ Extraer logs del error (primer a último match)
+            def rawLog = currentBuild.rawBuild.getLog(4000)
+            def errorPattern = ~/(?i)(error|exception|failed|traceback|unknown revision)/
+            def matches = rawLog.findIndexValues { it =~ errorPattern }
+
+            if (!matches.isEmpty()) {
+                def firstErrorIndex = matches.first()
+                def lastErrorIndex = matches.last()
+                def start = Math.max(0, firstErrorIndex - 10)
+                def end = Math.min(rawLog.size() - 1, lastErrorIndex + 30)
+
+                message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
+                message += "\n```🔎 Error detectado:\n${rawLog[start..end].join('\n').take(3000)}\n```"
             } else {
-                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(120).join('\n')}```"
+                message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
+                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(150).join('\n')}```"
             }
         } catch (e) {
-            message += "\n_(No se pudo extraer el log de error: ${e.message})_"
+            message += "\n_(No se pudo extraer el log de error ni la etapa fallida)_"
         }
     }
 
