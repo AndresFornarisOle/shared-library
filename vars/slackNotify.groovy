@@ -1,94 +1,78 @@
 def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
-    def includeLog   = config.includeLog != null ? config.includeLog : true
-    def showStatus   = config.get('showStatus', null)  // Si no se pasa, detectamos automáticamente
-    def result       = currentBuild.currentResult
+    def includeLog   = config.includeLog != null ? config.includeLog : true // 🔥 Por defecto true
+    def isStartMsg   = config.containsKey('showStatus') ? !config.showStatus : false // 🔥 Detecta inicio sin estado
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
     def buildNumber  = env.BUILD_NUMBER ?: ''
+    def result       = currentBuild.currentResult ?: 'UNKNOWN'
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
+    def buildDuration = ""
 
-    // 🔥 Detectar si estamos en INICIO (fuera de post actions)
-    def isPostAction = currentBuild.rawBuild.execution.currentHeads*.displayName.any { it == "Declarative: Post Actions" }
-    if (!isPostAction && showStatus == null) {
-        showStatus = false  // Forzamos inicio
-    } else if (showStatus == null) {
-        showStatus = true   // Post actions: mostramos estado real
+    // ⏱️ Calcular duración solo si NO es inicio
+    if (!isStartMsg && result != 'UNKNOWN') {
+        def durationMillis = currentBuild.duration ?: 0
+        def totalSeconds = (durationMillis / 1000) as long
+        buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
-    // Determinar quién ejecutó el pipeline
+    // 👤 Determinar quién ejecutó el pipeline
     try {
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
             triggeredBy = userCause.userName
-            emoji = ":bust_in_silhouette:"
+            emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":bust_in_silhouette:"
         } else {
             def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
             if (gitAuthor) {
                 triggeredBy = "Git Push por ${gitAuthor}"
-                emoji = ":technologist:"  // Alternativa nativa de Slack
+                emoji = ":male-technologist:"
             }
         }
     } catch (e) {
         triggeredBy = "Desconocido"
     }
 
-    // Ajustar emoji y color según estado
-    if (!showStatus) {
-        emoji = ":rocket:"
-        color = "#FBBF24"
-    } else {
-        switch (result) {
-            case 'SUCCESS':
-                emoji = ":white_check_mark:"
-                color = "good"
-                break
-            case 'FAILURE':
-                emoji = ":x:"
-                color = "danger"
-                break
-            case 'ABORTED':
-                emoji = ":no_entry:"
-                color = "#AAAAAA"
-                break
-        }
-    }
-
-    // Construir mensaje
+    // 📝 Construir mensaje
     def message = "*${emoji} ${jobName}* #${buildNumber}"
-    if (!showStatus) {
+
+    if (isStartMsg) {
         message += " ha iniciado"
     } else {
         message += " terminó con estado: *${result}*"
+        if (buildDuration) {
+            message += "\n:stopwatch: *Duración:* ${buildDuration}"
+        }
     }
 
-    // Duración solo si es post
-    if (showStatus && binding.hasVariable('buildStartTime')) {
-        def buildEndTime = System.currentTimeMillis()
-        def totalSeconds = ((buildEndTime - binding.getVariable('buildStartTime')) / 1000) as long
-        def duration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
-        message += "\n:stopwatch: *Duración:* ${duration}"
-    }
-
-    // Logs en caso de fallo
-    if (includeLog && showStatus && result == 'FAILURE') {
+    // 🔎 Extraer logs solo si falló
+    if (includeLog && !isStartMsg && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(200)
-            def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|fail)/ }
-            def logSnippet = errorLines ? errorLines.join('\n') : rawLog.takeRight(20).join('\n')
-            message += "\n```" + logSnippet.take(1000) + "```"
+            def rawLog = currentBuild.rawBuild.getLog(1000)
+            def errorIndex = rawLog.findIndexOf { it =~ /(?i)(error|exception|failed|traceback)/ }
+
+            if (errorIndex != -1) {
+                def start = Math.max(0, errorIndex - 20)
+                def end = Math.min(rawLog.size() - 1, errorIndex + 20)
+                def contextLog = rawLog[start..end].join('\n')
+                message += "\n```🔎 Posible error detectado:\n${contextLog.take(1000)}\n```"
+            } else {
+                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(50).join('\n')}```"
+            }
         } catch (e) {
             message += "\n_(No se pudo extraer el log de error)_"
         }
     }
 
-    message += "\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
+    // 👤 Autor de ejecución y enlace
+    message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
+    // 📤 Enviar a Slack
     slackSend(
         channel: channel,
-        color: color,
+        color: (isStartMsg ? '#FBBF24' : color),
         message: message
     )
 }
