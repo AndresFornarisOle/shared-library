@@ -9,9 +9,11 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🔑 Detectar inicio
+    // 🔑 Detectar inicio usando flag global
     def isStart = (env.PIPELINE_STARTED == null)
-    if (isStart) env.PIPELINE_STARTED = "true"
+    if (isStart) {
+        env.PIPELINE_STARTED = "true"
+    }
 
     // 🕑 Calcular duración
     def buildDuration = ""
@@ -38,7 +40,22 @@ def call(Map config = [:]) {
         triggeredBy = "Desconocido"
     }
 
-    // 📝 Mensaje inicial/final
+    // 🎯 Detectar etapa fallida
+    def failedStage = "No detectada"
+    if (!isStart && result == 'FAILURE') {
+        try {
+            def flowNodes = currentBuild.rawBuild.getExecution().getCurrentHeads()
+            def failedNode = flowNodes.find { it.error != null }
+            if (failedNode?.getEnclosingBlocks()) {
+                def enclosing = failedNode.getEnclosingBlocks().last()
+                failedStage = enclosing.getDisplayName()
+            }
+        } catch (err) {
+            failedStage = "No detectada"
+        }
+    }
+
+    // 📝 Construir mensaje base
     def message = ""
     if (isStart) {
         message = ":rocket: *${jobName}* #${buildNumber} ha iniciado\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
@@ -46,50 +63,30 @@ def call(Map config = [:]) {
         message = "*${emoji} ${jobName}* #${buildNumber} terminó con estado: *${result}*"
         if (buildDuration) message += "\n:stopwatch: *Duración:* ${buildDuration}"
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
+
+        if (result == 'FAILURE') {
+            message += "\n:boom: *Falló en la etapa:* ${failedStage}"
+        }
     }
 
-    // 🔎 Extraer PRIMERA etapa fallida y error raíz
+    // 🔎 Logs si falla (resaltando la línea exacta del error con 👉)
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(8000)
-            def failedStage = "No detectada"
-
-            // 1️⃣ Detectar primera ocurrencia de "skipped"
-            def skipIndex = rawLog.findIndexOf { it =~ /skipped due to earlier failure/ }
-            if (skipIndex > 0) {
-                // Buscar las dos últimas líneas con formato de etapa antes de skip
-                def stagesFound = []
-                for (int i = skipIndex - 1; i >= 0; i--) {
-                    def match = (rawLog[i] =~ /\[Pipeline\] \{ \((.+)\)/)
-                    if (match) {
-                        stagesFound << match[0][1]
-                        if (stagesFound.size() == 2) break
-                    }
-                }
-                // Tomar la inmediatamente anterior (segunda encontrada)
-                if (stagesFound.size() >= 2) {
-                    failedStage = stagesFound[1]
-                } else if (stagesFound) {
-                    failedStage = stagesFound[0]
-                }
-            }
-
-            // 2️⃣ Buscar error raíz (última ocurrencia relevante)
-            def errorPattern = ~/(?i)(unknown revision|error:|exception|failed|traceback)/
-            def allErrors = rawLog.findIndexValues { it =~ errorPattern }
-            def errorIndex = allErrors ? allErrors.last() : -1
+            def rawLog = currentBuild.rawBuild.getLog(2000)
+            def errorIndex = rawLog.findIndexOf { it =~ /(?i)(error|exception|failed|traceback|unknown revision)/ }
 
             if (errorIndex != -1) {
-                def start = Math.max(0, errorIndex - 5)
-                def end = Math.min(rawLog.size() - 1, errorIndex + 15)
-                message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
-                message += "\n```🔎 Raíz del error:\n${rawLog[start..end].join('\n').take(3000)}\n```"
+                def start = Math.max(0, errorIndex - 20)
+                def end = Math.min(rawLog.size() - 1, errorIndex + 20)
+                def logSnippet = rawLog[start..end].collectWithIndex { line, idx ->
+                    (start + idx == errorIndex) ? "👉 ${line}" : line
+                }.join('\n')
+                message += "\n```🔎 Primer error detectado:\n${logSnippet.take(2000)}\n```"
             } else {
-                message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
-                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(120).join('\n')}```"
+                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(100).join('\n')}```"
             }
         } catch (e) {
-            message += "\n_(No se pudo extraer el log ni la etapa fallida)_"
+            message += "\n_(No se pudo extraer el log de error)_"
         }
     }
 
@@ -105,5 +102,9 @@ def call(Map config = [:]) {
     }
 
     // 📢 Enviar a Slack
-    slackSend(channel: channel, color: color, message: message)
+    slackSend(
+        channel: channel,
+        color: color,
+        message: message
+    )
 }
