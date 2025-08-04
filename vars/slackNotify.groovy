@@ -9,12 +9,12 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🔥 Detectar inicio: duración 0 y sin resultado definitivo
-    def isStartMsg = (currentBuild.duration == 0 && result in ['SUCCESS', 'UNKNOWN'])
+    // Detectar inicio automáticamente si duración < 1s y SUCCESS
+    def isStart = (currentBuild.duration < 1000 && result == 'SUCCESS')
 
-    // 🕑 Duración solo para mensajes finales
+    // 🕑 Calcular duración solo si no es inicio
     def buildDuration = ""
-    if (!isStartMsg && result != 'UNKNOWN') {
+    if (!isStart && result != 'UNKNOWN') {
         def durationMillis = currentBuild.duration ?: 0
         def totalSeconds = (durationMillis / 1000) as long
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
@@ -37,28 +37,25 @@ def call(Map config = [:]) {
         triggeredBy = "Desconocido"
     }
 
-    // 📝 Construcción del mensaje
-    def message = "*${emoji} ${jobName}* #${buildNumber}"
-    if (isStartMsg) {
-        message += " ha iniciado"
+    // 📝 Construir mensaje según el caso
+    def message = ""
+    if (isStart) {
+        message = ":rocket: *${jobName}* #${buildNumber} ha iniciado\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     } else {
-        message += " terminó con estado: *${result}*"
-        if (buildDuration) {
-            message += "\n:stopwatch: *Duración:* ${buildDuration}"
-        }
+        message = "*${emoji} ${jobName}* #${buildNumber} terminó con estado: *${result}*"
+        if (buildDuration) message += "\n:stopwatch: *Duración:* ${buildDuration}"
+        message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
     // 🔎 Logs si falla
-    if (includeLog && !isStartMsg && result == 'FAILURE') {
+    if (includeLog && !isStart && result == 'FAILURE') {
         try {
             def rawLog = currentBuild.rawBuild.getLog(2000)
             def errorIndex = rawLog.findIndexOf { it =~ /(?i)(error|exception|failed|traceback)/ }
-
             if (errorIndex != -1) {
                 def start = Math.max(0, errorIndex - 20)
                 def end = Math.min(rawLog.size() - 1, errorIndex + 20)
-                def contextLog = rawLog[start..end].join('\n')
-                message += "\n```🔎 Posible error detectado:\n${contextLog.take(2000)}\n```"
+                message += "\n```🔎 Error detectado:\n${rawLog[start..end].join('\n').take(2000)}\n```"
             } else {
                 message += "\n```(No se detectó error específico)\n${rawLog.takeRight(100).join('\n')}```"
             }
@@ -67,12 +64,21 @@ def call(Map config = [:]) {
         }
     }
 
-    // 👤 Autor del despliegue
-    message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
+    // 🎨 Color según estado
+    if (isStart) {
+        color = "#FBBF24" // Amarillo para inicio
+    } else if (result == 'FAILURE') {
+        color = "danger"
+    } else if (result == 'ABORTED') {
+        color = "#808080"
+    } else {
+        color = "good"
+    }
 
+    // 📢 Enviar a Slack
     slackSend(
         channel: channel,
-        color: (isStartMsg ? '#FBBF24' : (result == 'FAILURE' ? 'danger' : color)),
+        color: color,
         message: message
     )
 }
