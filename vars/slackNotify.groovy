@@ -1,26 +1,26 @@
 def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
-    def includeLog   = config.includeLog != null ? config.includeLog : true // 🔥 Por defecto true
-    def showStatus   = config.containsKey('showStatus') ? config.showStatus : true
-    def isStartMsg   = !showStatus // 🔥 Si showStatus es false, es un mensaje de inicio
-
+    def includeLog   = config.includeLog != null ? config.includeLog : true
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
     def buildNumber  = env.BUILD_NUMBER ?: ''
-    def result       = isStartMsg ? 'IN_PROGRESS' : (currentBuild.currentResult ?: 'UNKNOWN')
+    def result       = currentBuild.currentResult ?: 'UNKNOWN'
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
-    def buildDuration = ""
 
-    // ⏱️ Calcular duración solo si es finalización
+    // 🔥 Detectar si es inicio: duración == 0 o result == "SUCCESS" pero build no terminó
+    def isStartMsg = (currentBuild.duration == null || currentBuild.duration == 0)
+
+    // 🕑 Duración solo si es final
+    def buildDuration = ""
     if (!isStartMsg && result != 'UNKNOWN') {
         def durationMillis = currentBuild.duration ?: 0
         def totalSeconds = (durationMillis / 1000) as long
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
-    // 👤 Determinar quién ejecutó el pipeline
+    // 👤 Determinar ejecutor
     try {
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
@@ -39,7 +39,6 @@ def call(Map config = [:]) {
 
     // 📝 Construcción del mensaje
     def message = "*${emoji} ${jobName}* #${buildNumber}"
-
     if (isStartMsg) {
         message += " ha iniciado"
     } else {
@@ -49,32 +48,31 @@ def call(Map config = [:]) {
         }
     }
 
-    // 🔎 Extraer logs si falló
+    // 🔎 Logs si falla
     if (includeLog && !isStartMsg && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(1000)
+            def rawLog = currentBuild.rawBuild.getLog(2000) // 🔥 Capturamos más líneas
             def errorIndex = rawLog.findIndexOf { it =~ /(?i)(error|exception|failed|traceback)/ }
 
             if (errorIndex != -1) {
                 def start = Math.max(0, errorIndex - 20)
                 def end = Math.min(rawLog.size() - 1, errorIndex + 20)
                 def contextLog = rawLog[start..end].join('\n')
-                message += "\n```🔎 Posible error detectado:\n${contextLog.take(1000)}\n```"
+                message += "\n```🔎 Posible error detectado:\n${contextLog.take(2000)}\n```"
             } else {
-                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(50).join('\n')}```"
+                message += "\n```(No se detectó error específico)\n${rawLog.takeRight(100).join('\n')}```"
             }
         } catch (e) {
             message += "\n_(No se pudo extraer el log de error)_"
         }
     }
 
-    // 👤 Autor de ejecución
+    // 👤 Autor
     message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
-    // 📤 Enviar mensaje a Slack
     slackSend(
         channel: channel,
-        color: (isStartMsg ? '#FBBF24' : color),
+        color: (isStartMsg ? '#FBBF24' : (result == 'FAILURE' ? 'danger' : color)),
         message: message
     )
 }
