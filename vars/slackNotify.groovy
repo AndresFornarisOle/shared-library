@@ -9,8 +9,8 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🔥 Detectar si es inicio: duración == 0 o result == "SUCCESS" pero build no terminó
-    def isStartMsg = (currentBuild.duration == null || currentBuild.duration == 0)
+    // 🔥 Detectar si es inicio: en progreso y sin resultado final
+    def isStartMsg = currentBuild.inProgress && (result == 'SUCCESS' || result == 'UNKNOWN')
 
     // 🕑 Duración solo si es final
     def buildDuration = ""
@@ -51,7 +51,7 @@ def call(Map config = [:]) {
     // 🔎 Logs si falla
     if (includeLog && !isStartMsg && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(2000) // 🔥 Capturamos más líneas
+            def rawLog = currentBuild.rawBuild.getLog(2000)
             def errorIndex = rawLog.findIndexOf { it =~ /(?i)(error|exception|failed|traceback)/ }
 
             if (errorIndex != -1) {
