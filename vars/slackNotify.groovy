@@ -1,7 +1,7 @@
 def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
-    def includeLog   = config.includeLog != null ? config.includeLog : true  // 🔥 Siempre true por defecto
+    def includeLog   = config.includeLog != null ? config.includeLog : true
     def showStatus   = config.get('showStatus', true)
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
@@ -13,9 +13,9 @@ def call(Map config = [:]) {
     def buildStart   = currentBuild.startTimeInMillis ?: System.currentTimeMillis()
     def buildEnd     = System.currentTimeMillis()
     def totalSeconds = ((buildEnd - buildStart) / 1000) as long
-    def isStart      = (totalSeconds < 1)  // 🔥 Detectar inicio REAL del pipeline
+    def isStart      = (totalSeconds < 1)  // 🔥 Detecta inicio real del pipeline
 
-    // Calcular duración solo si no es inicio
+    // Duración solo si no es inicio
     if (!isStart) {
         duration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
@@ -37,26 +37,24 @@ def call(Map config = [:]) {
         triggeredBy = "Desconocido"
     }
 
-    // Construir mensaje
+    // Construir mensaje principal
     def message = "*${emoji} ${jobName}* #${buildNumber}"
-
     if (isStart) {
         message += " ha iniciado"
     } else {
         message += " terminó con estado: *${result}*"
         message += "\n:stopwatch: *Duración:* ${duration}"
     }
-
     message += "\n:person_with_blond_hair: *Desplegado por:* ${triggeredBy} (<${buildUrl}|Ver ejecución>)"
 
-    // Adjuntar logs si falla y no es inicio
+    // Extraer logs en caso de fallo
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(3000) // 🔥 Aumentamos tamaño
+            def rawLog = currentBuild.rawBuild.getLog(3000) // 🔥 Más líneas
             def errorLines = []
-            def keywords = [~/error/i, ~/exception/i, ~/failed/i, ~/traceback/i, ~/unknown revision/i]
+            def keywords = [~/(?i)error/, ~/(?i)exception/, ~/(?i)failed/, ~/(?i)traceback/, ~/(?i)unknown revision/]
 
-            // Detectar el último stage ejecutado antes del fallo
+            // Detectar último stage ejecutado
             def failedStage = rawLog.findAll { it =~ /\[Pipeline\] \{ \((.*?)\)/ }
                                        .collect { it.replaceAll(/.*\((.*?)\).*/, '$1') }
                                        .findAll { it && !it.toLowerCase().contains("declarative") }
@@ -82,13 +80,12 @@ def call(Map config = [:]) {
                 def tailLog = rawLog.takeRight(120).join('\n')
                 message += "\n```(No se detectaron errores específicos)\n${tailLog}```"
             }
-
         } catch (e) {
             message += "\n_(No se pudo extraer el log de error: ${e.message})_"
         }
     }
 
-    // Enviar a Slack
+    // Enviar mensaje a Slack
     slackSend(
         channel: channel,
         color: (isStart ? '#FBBF24' : (result == 'SUCCESS' ? 'good' : 'danger')),
