@@ -2,16 +2,18 @@ def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
     def includeLog   = config.includeLog != null ? config.includeLog : true // 🔥 Por defecto true
-    def isStartMsg   = config.containsKey('showStatus') ? !config.showStatus : false // 🔥 Detecta inicio sin estado
+    def showStatus   = config.containsKey('showStatus') ? config.showStatus : true
+    def isStartMsg   = !showStatus // 🔥 Si showStatus es false, es un mensaje de inicio
+
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
     def buildNumber  = env.BUILD_NUMBER ?: ''
-    def result       = currentBuild.currentResult ?: 'UNKNOWN'
+    def result       = isStartMsg ? 'IN_PROGRESS' : (currentBuild.currentResult ?: 'UNKNOWN')
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
     def buildDuration = ""
 
-    // ⏱️ Calcular duración solo si NO es inicio
+    // ⏱️ Calcular duración solo si es finalización
     if (!isStartMsg && result != 'UNKNOWN') {
         def durationMillis = currentBuild.duration ?: 0
         def totalSeconds = (durationMillis / 1000) as long
@@ -35,7 +37,7 @@ def call(Map config = [:]) {
         triggeredBy = "Desconocido"
     }
 
-    // 📝 Construir mensaje
+    // 📝 Construcción del mensaje
     def message = "*${emoji} ${jobName}* #${buildNumber}"
 
     if (isStartMsg) {
@@ -47,7 +49,7 @@ def call(Map config = [:]) {
         }
     }
 
-    // 🔎 Extraer logs solo si falló
+    // 🔎 Extraer logs si falló
     if (includeLog && !isStartMsg && result == 'FAILURE') {
         try {
             def rawLog = currentBuild.rawBuild.getLog(1000)
@@ -66,10 +68,10 @@ def call(Map config = [:]) {
         }
     }
 
-    // 👤 Autor de ejecución y enlace
+    // 👤 Autor de ejecución
     message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
-    // 📤 Enviar a Slack
+    // 📤 Enviar mensaje a Slack
     slackSend(
         channel: channel,
         color: (isStartMsg ? '#FBBF24' : color),
