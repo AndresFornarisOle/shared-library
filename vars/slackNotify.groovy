@@ -2,14 +2,16 @@ def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
     def includeLog   = config.includeLog ?: false
-    def showStatus   = config.get('showStatus', true)
+    def showStatus   = config.get('showStatus', true)  // Flag para diferenciar inicio/fin
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
     def buildNumber  = env.BUILD_NUMBER ?: ''
+    def result       = currentBuild.currentResult ?: 'UNKNOWN'
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
+    def durationStr  = ""
 
-    // Determinar quién ejecutó el build
+    // Determinar quién lo ejecutó
     try {
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
@@ -26,25 +28,26 @@ def call(Map config = [:]) {
         triggeredBy = "Desconocido"
     }
 
-    // Estado y duración solo si es post (showStatus = true)
-    def result = "EN PROGRESO"
-    def durationStr = ""
+    // Mensaje base
+    def message = "*${emoji} ${jobName}* #${buildNumber}"
+
     if (showStatus) {
         result = currentBuild.currentResult ?: 'UNKNOWN'
+        message += " terminó con estado: *${result}*"
+
+        // Calcular duración SOLO al finalizar
         if (result in ['SUCCESS', 'FAILURE', 'UNSTABLE']) {
-            def durationMs = currentBuild.duration ?: 0
-            def minutes = (durationMs / 1000 / 60).intValue()
-            def seconds = ((durationMs / 1000) % 60).intValue()
+            def durationMs = (currentBuild.duration ?: 0).toLong()  // Convertir a long
+            def minutes = (durationMs / 1000 / 60) as int
+            def seconds = ((durationMs / 1000) % 60) as int
             durationStr = "\n⏱️ *Duración:* ${minutes}m ${seconds}s"
         }
+    } else {
+        message += " ha iniciado"
     }
 
-    // Construir mensaje
-    def message = "*${emoji} ${jobName}* #${buildNumber}"
-    message += showStatus ? " terminó con estado: *${result}*" : " ha iniciado"
-
-    // Logs de error si falla
-    if (includeLog && showStatus && result == 'FAILURE') {
+    // Logs en caso de fallo
+    if (includeLog && result == 'FAILURE') {
         try {
             def rawLog = currentBuild.rawBuild.getLog(100)
             def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|fail)/ }
@@ -55,9 +58,10 @@ def call(Map config = [:]) {
         }
     }
 
-    message += "\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
-    message += durationStr
+    // Agregar info de quién lo disparó y duración
+    message += "${durationStr}\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
+    // Enviar mensaje a Slack
     slackSend(
         channel: channel,
         color: color,
