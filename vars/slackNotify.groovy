@@ -1,13 +1,14 @@
 def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
-    def includeLog   = config.includeLog != null ? config.includeLog : true  // 🔥 Ahora por defecto siempre true
+    def includeLog   = config.includeLog != null ? config.includeLog : true  // Por defecto en true
+    def showStatus   = config.get('showStatus', true)
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
     def buildNumber  = env.BUILD_NUMBER ?: ''
     def result       = currentBuild.currentResult ?: 'UNKNOWN'
     def triggeredBy  = "Sistema"
-    def emoji        = ":robot_face:"
+    def emoji        = ":computer:"  // Por defecto ejecución automática
 
     // Determinar quién lo ejecutó
     try {
@@ -19,34 +20,35 @@ def call(Map config = [:]) {
             def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
             if (gitAuthor) {
                 triggeredBy = "Git Push por ${gitAuthor}"
-                emoji = ":octocat:"
+                emoji = ":rocket:" // Cambio de octocat por rocket para inicio vía Git
             }
         }
     } catch (e) {
         triggeredBy = "Desconocido"
     }
 
-    // Detectar si el build está iniciando
-    def isBuilding = (currentBuild.result == null || (currentBuild.result == 'SUCCESS' && currentBuild.duration == 0))
-
-    // Construir mensaje principal
+    // Construcción del mensaje
     def message = "*${emoji} ${jobName}* #${buildNumber}"
-    if (isBuilding) {
-        message += " ha iniciado"
-    } else {
-        message += " terminó con estado: *${result}*"
 
-        // Calcular duración
-        def durationSeconds = (currentBuild.duration ?: 0) / 1000
-        def minutes = (int)(durationSeconds / 60)
-        def seconds = (int)(durationSeconds % 60)
-        message += "\n:stopwatch: Duración: ${minutes}m ${seconds}s"
+    if (showStatus) {
+        if (result == 'SUCCESS') {
+            emoji = ":white_check_mark:"
+        } else if (result == 'FAILURE') {
+            emoji = ":x:"
+        } else if (result == 'UNSTABLE') {
+            emoji = ":warning:"
+        } else {
+            emoji = ":hourglass_flowing_sand:" // Estado desconocido o en progreso
+        }
+        message = "*${emoji} ${jobName}* #${buildNumber} terminó con estado: *${result}*"
+    } else {
+        message += " ha iniciado :rocket:"
     }
 
-    // Mostrar errores si falla y está habilitado includeLog (true por defecto)
-    if (result == 'FAILURE' && includeLog) {
+    // Incluir log en caso de fallo
+    if (includeLog && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(200)
+            def rawLog = currentBuild.rawBuild.getLog(100)
             def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|fail)/ }
             def logSnippet = errorLines ? errorLines.join('\n') : rawLog.takeRight(20).join('\n')
             message += "\n```" + logSnippet.take(1000) + "```"
@@ -55,12 +57,21 @@ def call(Map config = [:]) {
         }
     }
 
+    // Tiempo de ejecución
+    def duration = ''
+    try {
+        def durationMillis = currentBuild.duration ?: 0
+        def totalSeconds = (durationMillis / 1000) as long
+        duration = "\n:stopwatch: *Duración:* ${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
+    } catch (ignored) { }
+
+    message += duration
     message += "\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
     // Enviar a Slack
     slackSend(
         channel: channel,
-        color: (isBuilding ? '#FBBF24' : (result == 'FAILURE' ? '#FF0000' : color)),
+        color: color,
         message: message
     )
 }
