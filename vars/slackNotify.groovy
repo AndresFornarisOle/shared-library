@@ -2,64 +2,72 @@ def call(Map config = [:]) {
     def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
     def includeLog   = config.includeLog ?: true
-    def result       = currentBuild.currentResult ?: 'STARTING'  // Detecta si es inicio
-    def showStatus   = (result != 'STARTING')  // Evita mostrar estado en inicio automáticamente
+    def result       = currentBuild.currentResult
     def buildUrl     = env.BUILD_URL ?: ''
     def jobName      = env.JOB_NAME ?: ''
     def buildNumber  = env.BUILD_NUMBER ?: ''
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
+    // 🔥 Forzar estado "STARTING" si no hay etapas previas ejecutadas
+    if (!currentBuild.rawBuild.getExecution().getCurrentHeads().any { it.execution != null && it.getDisplayName() != 'Declarative: Post Actions' }) {
+        result = 'STARTING'
+    }
+
     // Determinar quién ejecutó el pipeline
     try {
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
             triggeredBy = userCause.userName
-            emoji = ":bust_in_silhouette:" // Emoji de usuario
+            emoji = ":bust_in_silhouette:" // Usuario
         } else {
             def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
             if (gitAuthor) {
                 triggeredBy = "Git Push por ${gitAuthor}"
-                emoji = ":git:" // Emoji nativo para commits
+                emoji = ":git:" // Commit
             }
         }
     } catch (e) {
         triggeredBy = "Desconocido"
     }
 
-    // Ajustar emoji según estado
-    if (result == 'STARTING') { 
-        emoji = ":rocket:" 
-        color = "#FBBF24" 
-    } else if (result == 'SUCCESS') { 
-        emoji = ":white_check_mark:" 
-        color = "good"
-    } else if (result == 'FAILURE') { 
-        emoji = ":x:" 
-        color = "danger"
-    } else if (result == 'ABORTED') { 
-        emoji = ":no_entry:" 
-        color = "#AAAAAA"
+    // Ajustar emoji y color según estado
+    switch (result) {
+        case 'STARTING':
+            emoji = ":rocket:"
+            color = "#FBBF24"
+            break
+        case 'SUCCESS':
+            emoji = ":white_check_mark:"
+            color = "good"
+            break
+        case 'FAILURE':
+            emoji = ":x:"
+            color = "danger"
+            break
+        case 'ABORTED':
+            emoji = ":no_entry:"
+            color = "#AAAAAA"
+            break
     }
 
     // Construir mensaje
     def message = "*${emoji} ${jobName}* #${buildNumber}"
-
-    if (showStatus) {
-        message += " terminó con estado: *${result}*"
-    } else {
+    if (result == 'STARTING') {
         message += " ha iniciado"
+    } else {
+        message += " terminó con estado: *${result}*"
     }
 
-    // Calcular duración solo si NO es inicio
-    if (showStatus && binding.hasVariable('buildStartTime')) {
+    // Duración solo en post-actions
+    if (result != 'STARTING' && binding.hasVariable('buildStartTime')) {
         def buildEndTime = System.currentTimeMillis()
         def totalSeconds = ((buildEndTime - binding.getVariable('buildStartTime')) / 1000) as long
         def duration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
         message += "\n:stopwatch: *Duración:* ${duration}"
     }
 
-    // Incluir logs si es fallo y está habilitado
+    // Logs si es fallo
     if (includeLog && result == 'FAILURE') {
         try {
             def rawLog = currentBuild.rawBuild.getLog(200)
@@ -71,10 +79,9 @@ def call(Map config = [:]) {
         }
     }
 
-    // Agregar quién ejecutó y link a ejecución
+    // Footer con usuario y link
     message += "\n👤 Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
 
-    // Enviar mensaje a Slack
     slackSend(
         channel: channel,
         color: color,
