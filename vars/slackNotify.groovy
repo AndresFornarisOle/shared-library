@@ -48,24 +48,25 @@ def call(Map config = [:]) {
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
-    // 🔎 Extraer primera etapa fallida y logs del error
+    // 🔎 Extraer PRIMERA etapa fallida + raíz del error real
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(5000)
+            def rawLog = currentBuild.rawBuild.getLog(8000) // más líneas
 
-            // Detectar la primera etapa fallida
+            // 1️⃣ Detectar primera etapa fallida
             def failedStageLine = rawLog.find { it =~ /Stage "(.+)" failed/ }
             def failedStage = failedStageLine ? (failedStageLine =~ /Stage "(.+)" failed/)[0][1] : "No detectada"
 
-            // Buscar el primer error relevante
-            def errorPattern = ~/(?i)(error|exception|failed|traceback|unknown revision)/
-            def firstErrorIndex = rawLog.findIndexOf { it =~ errorPattern }
+            // 2️⃣ Buscar la ÚLTIMA ocurrencia de error real
+            def errorPattern = ~/(?i)(unknown revision|error:|exception|failed|traceback)/
+            def allErrors = rawLog.findIndexValues { it =~ errorPattern }
+            def errorIndex = allErrors ? allErrors.last() : -1
 
-            if (firstErrorIndex != -1) {
-                def start = Math.max(0, firstErrorIndex - 10)
-                def end = Math.min(rawLog.size() - 1, firstErrorIndex + 40)
+            if (errorIndex != -1) {
+                def start = Math.max(0, errorIndex - 5)
+                def end = Math.min(rawLog.size() - 1, errorIndex + 15)
                 message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
-                message += "\n```🔎 Primer error detectado:\n${rawLog[start..end].join('\n').take(3000)}\n```"
+                message += "\n```🔎 Raíz del error:\n${rawLog[start..end].join('\n').take(3000)}\n```"
             } else {
                 message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
                 message += "\n```(No se detectó error específico)\n${rawLog.takeRight(120).join('\n')}```"
