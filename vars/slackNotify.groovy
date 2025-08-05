@@ -56,6 +56,8 @@ def call(Map config = [:]) {
     def message = ""
     if (isStart) {
         message = ":rocket: *${jobName}* #${buildNumber} ha iniciado\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
+    } else if (result == 'ABORTED') {
+        message = "⚪ *${jobName}* #${buildNumber} fue *CANCELADO* manualmente.\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     } else {
         message = "*${emoji} ${jobName}* #${buildNumber} terminó con estado: *${result}*"
         if (buildDuration) message += "\n:stopwatch: *Duración:* ${buildDuration}"
@@ -88,7 +90,7 @@ def call(Map config = [:]) {
     } else if (result == 'FAILURE') {
         color = "danger"
     } else if (result == 'ABORTED') {
-        color = "#808080"
+        color = "#808080" // Gris para cancelación
     } else {
         color = "good"
     }
