@@ -52,15 +52,25 @@ def call(Map config = [:]) {
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
-    // 🔎 Detección de etapa fallida
+    // 🔎 Detección de etapa fallida sin usar spread
     def failedStage = "No detectada"
     if (!isStart && result == 'FAILURE') {
         try {
-            def flowNodes = currentBuild.rawBuild?.getExecution()?.getCurrentHeads()*.getExecution()?.getNodes()?.flatten()
-            def errorNodes = flowNodes.findAll { it.getError() != null }
+            def heads = currentBuild.rawBuild?.getExecution()?.getCurrentHeads()
+            def allNodes = []
+            if (heads) {
+                heads.each { head ->
+                    def exec = head.getExecution()
+                    if (exec) {
+                        exec.getNodes().each { node ->
+                            allNodes << node
+                        }
+                    }
+                }
+            }
+            def errorNodes = allNodes.findAll { it.getError() != null }
             if (errorNodes) {
-                def firstFailedNode = errorNodes.first()
-                failedStage = firstFailedNode.getDisplayName()
+                failedStage = errorNodes.first().getDisplayName()
             }
         } catch (e) {
             failedStage = "No detectada"
@@ -74,7 +84,7 @@ def call(Map config = [:]) {
             def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|failed|traceback|unknown revision)/ }
 
             if (errorLines) {
-                def lastErrorLine = errorLines.last() // Tomar el ÚLTIMO error real
+                def lastErrorLine = errorLines.last()
                 def errorIndex = rawLog.indexOf(lastErrorLine)
 
                 // Capturamos contexto alrededor del error
