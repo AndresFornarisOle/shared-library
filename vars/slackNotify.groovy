@@ -15,7 +15,7 @@ def call(Map config = [:]) {
         env.PIPELINE_STARTED = "true"
     }
 
-    // 🕑 Calcular duración
+    // 🕑 Calcular duración solo si no es inicio
     def buildDuration = ""
     if (!isStart && result != 'UNKNOWN') {
         def durationMillis = currentBuild.duration ?: 0
@@ -23,39 +23,31 @@ def call(Map config = [:]) {
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
-    // 👤 Determinar quién disparó el pipeline
+    // 👤 Detección híbrida del usuario
     try {
+        // 1️⃣ Prioridad: Usuario que ejecutó el build manualmente
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
             triggeredBy = userCause.userName
-            emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":bust_in_silhouette:"
-        } else {
-            def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
-            if (gitAuthor) {
-                triggeredBy = "Git Push por ${gitAuthor}"
-                emoji = ":male-technologist:"
-            }
+        }
+        // 2️⃣ Fallback: Variables de entorno del plugin Build User Vars
+        else if (env.BUILD_USER?.trim()) {
+            triggeredBy = env.BUILD_USER
+        }
+        // 3️⃣ Fallback: Autor del último commit
+        else {
+            def gitAuthor = sh(script: "git log -1 --pretty=format:'%an' || true", returnStdout: true).trim()
+            if (gitAuthor) triggeredBy = "Git Push por ${gitAuthor}"
         }
     } catch (e) {
         triggeredBy = "Desconocido"
     }
 
-    // 🎯 Detectar etapa fallida
-    def failedStage = "No detectada"
-    if (!isStart && result == 'FAILURE') {
-        try {
-            def flowNodes = currentBuild.rawBuild.getExecution().getCurrentHeads()
-            def failedNode = flowNodes.find { it.error != null }
-            if (failedNode?.getEnclosingBlocks()) {
-                def enclosing = failedNode.getEnclosingBlocks().last()
-                failedStage = enclosing.getDisplayName()
-            }
-        } catch (err) {
-            failedStage = "No detectada"
-        }
-    }
+    // 👑 Emoji según usuario
+    emoji = (triggeredBy?.toLowerCase()?.contains("andres fornaris") || triggeredBy?.toLowerCase()?.contains("admin")) ? ":crown:" :
+            (triggeredBy?.toLowerCase()?.contains("git push") ? ":male-technologist:" : ":bust_in_silhouette:")
 
-    // 📝 Construir mensaje base
+    // 📝 Construir mensaje
     def message = ""
     if (isStart) {
         message = ":rocket: *${jobName}* #${buildNumber} ha iniciado\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
@@ -63,25 +55,20 @@ def call(Map config = [:]) {
         message = "*${emoji} ${jobName}* #${buildNumber} terminó con estado: *${result}*"
         if (buildDuration) message += "\n:stopwatch: *Duración:* ${buildDuration}"
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
-
-        if (result == 'FAILURE') {
-            message += "\n:boom: *Falló en la etapa:* ${failedStage}"
-        }
     }
 
-    // 🔎 Logs si falla (resaltando la línea exacta del error con 👉)
+    // 🔎 Logs si falla
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
             def rawLog = currentBuild.rawBuild.getLog(2000)
             def errorIndex = rawLog.findIndexOf { it =~ /(?i)(error|exception|failed|traceback|unknown revision)/ }
-
             if (errorIndex != -1) {
                 def start = Math.max(0, errorIndex - 20)
                 def end = Math.min(rawLog.size() - 1, errorIndex + 20)
-                def logSnippet = rawLog[start..end].collectWithIndex { line, idx ->
-                    (start + idx == errorIndex) ? "👉 ${line}" : line
-                }.join('\n')
-                message += "\n```🔎 Primer error detectado:\n${logSnippet.take(2000)}\n```"
+                def highlightedLog = rawLog[start..end].collectIndexed { idx, line ->
+                    idx + start == errorIndex ? "👉 ${line}" : line
+                }.join('\n').take(2000)
+                message += "\n```🔎 Primer error detectado:\n${highlightedLog}\n```"
             } else {
                 message += "\n```(No se detectó error específico)\n${rawLog.takeRight(100).join('\n')}```"
             }
