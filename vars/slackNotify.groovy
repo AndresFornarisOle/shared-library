@@ -9,28 +9,29 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🔑 Detectar inicio usando una variable del entorno del pipeline actual
-    def isStart = (env.PIPELINE_STARTED == null)
+    // 🔑 Detectar inicio sin variables globales usando parámetros del build
+    def isStart = !currentBuild.rawBuild.getAction(hudson.model.ParametersAction)?.getParameter('PIPELINE_STARTED')
     if (isStart) {
-        env.PIPELINE_STARTED = "true"
+        currentBuild.rawBuild.addAction(new hudson.model.ParametersAction(
+            new hudson.model.StringParameterValue('PIPELINE_STARTED', 'true')
+        ))
     }
 
     // 🕑 Calcular duración solo si no es inicio
     def buildDuration = ""
     if (!isStart && result != 'UNKNOWN') {
         def durationMillis = currentBuild.duration ?: 0
-        def totalSeconds = (durationMillis / 1000).toLong()
+        def totalSeconds = (durationMillis / 1000) as long
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
-    // 👤 Determinar quién disparó el pipeline (por usuario o por Git Push)
+    // 👤 Determinar quién disparó el pipeline
     try {
         def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
         if (userCause) {
             triggeredBy = userCause.userName
             emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":bust_in_silhouette:"
         } else {
-            // Detectar si fue un Git Push
             def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
             if (gitAuthor) {
                 triggeredBy = "Git Push por ${gitAuthor}"
@@ -51,30 +52,53 @@ def call(Map config = [:]) {
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
+    // 🔎 Detección de etapa fallida
+    def failedStage = "No detectada"
+    if (!isStart && result == 'FAILURE') {
+        try {
+            def flowNodes = currentBuild.rawBuild?.getExecution()?.getCurrentHeads()*.getExecution()?.getNodes()?.flatten()
+            def errorNodes = flowNodes.findAll { it.getError() != null }
+            if (errorNodes) {
+                def firstFailedNode = errorNodes.first()
+                failedStage = firstFailedNode.getDisplayName()
+            }
+        } catch (e) {
+            failedStage = "No detectada"
+        }
+    }
+
     // 🔎 Logs si falla
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(3000)
-            def errorIndex = rawLog.findIndexOf { it =~ /(?i)(error|exception|failed|traceback|unknown revision)/ }
-            if (errorIndex != -1) {
+            def rawLog = currentBuild.rawBuild.getLog(5000)
+            def errorLines = rawLog.findAll { it =~ /(?i)(error|exception|failed|traceback|unknown revision)/ }
+
+            if (errorLines) {
+                def lastErrorLine = errorLines.last() // Tomar el ÚLTIMO error real
+                def errorIndex = rawLog.indexOf(lastErrorLine)
+
+                // Capturamos contexto alrededor del error
                 def start = Math.max(0, errorIndex - 20)
-                def end = Math.min(rawLog.size() - 1, errorIndex + 30)
-                def highlighted = rawLog[start..end].collect { line ->
-                    (line == rawLog[errorIndex]) ? "👉 ${line}" : line
+                def end = Math.min(rawLog.size() - 1, errorIndex + 20)
+
+                def context = rawLog[start..end].collect { line ->
+                    (line =~ /(?i)(error|exception|failed|traceback|unknown revision)/) ? "👉 ${line}" : line
                 }
-                message += "\n:boom: *Falló en la etapa:* `${env.FAILED_STAGE ?: 'No detectada'}`"
-                message += "\n```🔎 Primer error detectado:\n${highlighted.join('\n').take(2000)}\n```"
+
+                message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
+                message += "\n```🔎 Primer error detectado:\n${context.join('\n').take(2000)}\n```"
             } else {
+                message += "\n:boom: *Falló en la etapa:* `${failedStage}`"
                 message += "\n```(No se detectó error específico)\n${rawLog.takeRight(100).join('\n')}```"
             }
         } catch (e) {
-            message += "\n_(No se pudo extraer el log de error)_"
+            message += "\n_(No se pudo extraer el log de error ni la etapa fallida)_"
         }
     }
 
     // 🎨 Color según estado
     if (isStart) {
-        color = "#FBBF24" // Amarillo inicio
+        color = "#FBBF24" // Amarillo para inicio
     } else if (result == 'FAILURE') {
         color = "danger"
     } else if (result == 'ABORTED') {
@@ -84,5 +108,9 @@ def call(Map config = [:]) {
     }
 
     // 📢 Enviar a Slack
-    slackSend(channel: channel, color: color, message: message)
+    slackSend(
+        channel: channel,
+        color: color,
+        message: message
+    )
 }
