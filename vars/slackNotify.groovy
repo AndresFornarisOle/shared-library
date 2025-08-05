@@ -9,17 +9,16 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🏷️ ID único por build para evitar conflictos entre ejecuciones simultáneas
-    def buildId = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
-    if (!binding.hasVariable("PIPELINE_FLAGS")) {
-        binding.setVariable("PIPELINE_FLAGS", [:])
+    // 🏷️ Usar variable asociada a currentBuild para evitar reinicios en post
+    if (!currentBuild.hasAction(ParametersAction)) {
+        currentBuild.addAction(new ParametersAction(new StringParameterValue("PIPELINE_STARTED", "false")))
     }
-    def flags = binding.getVariable("PIPELINE_FLAGS")
+    def param = currentBuild.getAction(ParametersAction).getParameter("PIPELINE_STARTED")
+    def isStart = (param?.value == "false")
 
-    // 🔑 Detectar inicio usando flag único por build
-    def isStart = !flags.containsKey(buildId)
     if (isStart) {
-        flags[buildId] = true
+        currentBuild.actions.removeAll { it instanceof ParametersAction }
+        currentBuild.addAction(new ParametersAction(new StringParameterValue("PIPELINE_STARTED", "true")))
     }
 
     // 🕑 Calcular duración solo si no es inicio
@@ -57,38 +56,26 @@ def call(Map config = [:]) {
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
-    // 🔎 Extraer logs si falla
+    // 🔎 Logs si falla
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(4000) // Capturamos más líneas del log
+            def rawLog = currentBuild.rawBuild.getLog(4000)
             def errorPattern = ~/(?i)(error|exception|failed|traceback|unknown revision)/
             def errorIndexes = []
-
-            // Buscar todos los índices de error
-            rawLog.eachWithIndex { line, idx ->
-                if (line =~ errorPattern) {
-                    errorIndexes << idx
-                }
-            }
+            rawLog.eachWithIndex { line, idx -> if (line =~ errorPattern) errorIndexes << idx }
 
             if (!errorIndexes.isEmpty()) {
                 def errorBlocks = []
-                errorIndexes.each { startIdx ->
+                errorIndexes.each { idx ->
                     def block = []
-                    for (int i = startIdx; i < rawLog.size() && block.size() < 200; i++) {
+                    for (int i = idx; i < rawLog.size() && block.size() < 200; i++) {
                         def line = rawLog[i]
-                        block << line
-                        if (line.trim().isEmpty()) break // cortar en línea vacía
-                    }
-                    if (!block.isEmpty()) {
-                        block[0] = "👉 ${block[0]}" // resaltar la primera línea del error
+                        block << (i == idx ? "👉 ${line}" : line)
+                        if (line.trim().isEmpty()) break
                     }
                     errorBlocks << block.join('\n')
                 }
-
-                // Combinar todos los bloques y limitar a 2000 caracteres para Slack
-                def combinedErrors = errorBlocks.join("\n\n---\n\n").take(2000)
-                message += "\n```🔎 Errores detectados:\n${combinedErrors}\n```"
+                message += "\n```🔎 Errores detectados:\n${errorBlocks.join('\n\n---\n\n').take(2000)}\n```"
             } else {
                 message += "\n```(No se detectó error específico)\n${rawLog.takeRight(100).join('\n')}```"
             }
@@ -98,20 +85,11 @@ def call(Map config = [:]) {
     }
 
     // 🎨 Color según estado
-    if (isStart) {
-        color = "#FBBF24" // Amarillo para inicio
-    } else if (result == 'FAILURE') {
-        color = "danger"
-    } else if (result == 'ABORTED') {
-        color = "#808080"
-    } else {
-        color = "good"
-    }
+    if (isStart) color = "#FBBF24"
+    else if (result == 'FAILURE') color = "danger"
+    else if (result == 'ABORTED') color = "#808080"
+    else color = "good"
 
     // 📢 Enviar a Slack
-    slackSend(
-        channel: channel,
-        color: color,
-        message: message
-    )
+    slackSend(channel: channel, color: color, message: message)
 }
