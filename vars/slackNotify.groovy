@@ -9,13 +9,13 @@ def call(Map config = [:]) {
     def triggeredBy  = "Sistema"
     def emoji        = ":robot_face:"
 
-    // 🔑 Detectar inicio usando flag global
+    // Detectar inicio
     def isStart = (env.PIPELINE_STARTED == null)
     if (isStart) {
         env.PIPELINE_STARTED = "true"
     }
 
-    // 🕑 Calcular duración solo si no es inicio
+    // Duración solo al final
     def buildDuration = ""
     if (!isStart && result != 'UNKNOWN') {
         def durationMillis = currentBuild.duration ?: 0
@@ -23,31 +23,36 @@ def call(Map config = [:]) {
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
-    // 👤 Detección híbrida del usuario
-    try {
-        // 1️⃣ Prioridad: Usuario que ejecutó el build manualmente
-        def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
-        if (userCause) {
-            triggeredBy = userCause.userName
+    // Usuario que disparó
+    if (isStart) {
+        try {
+            def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
+            if (userCause) {
+                triggeredBy = userCause.userName
+                emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":bust_in_silhouette:"
+            } else {
+                def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
+                if (gitAuthor) {
+                    triggeredBy = "Git Push por ${gitAuthor}"
+                    emoji = ":male-technologist:"
+                }
+            }
+        } catch (e) {
+            triggeredBy = "Desconocido"
         }
-        // 2️⃣ Fallback: Variables de entorno del plugin Build User Vars
-        else if (env.BUILD_USER?.trim()) {
-            triggeredBy = env.BUILD_USER
+
+        // Guardar info del usuario en la descripción del build
+        currentBuild.description = "${triggeredBy}|||${emoji}"
+    } else {
+        // Recuperar info del usuario de la descripción
+        if (currentBuild.description?.contains("|||")) {
+            def parts = currentBuild.description.split("\\|\\|\\|")
+            triggeredBy = parts[0]
+            emoji = parts[1]
         }
-        // 3️⃣ Fallback: Autor del último commit
-        else {
-            def gitAuthor = sh(script: "git log -1 --pretty=format:'%an' || true", returnStdout: true).trim()
-            if (gitAuthor) triggeredBy = "Git Push por ${gitAuthor}"
-        }
-    } catch (e) {
-        triggeredBy = "Desconocido"
     }
 
-    // 👑 Emoji según usuario
-    emoji = (triggeredBy?.toLowerCase()?.contains("andres fornaris") || triggeredBy?.toLowerCase()?.contains("admin")) ? ":crown:" :
-            (triggeredBy?.toLowerCase()?.contains("git push") ? ":male-technologist:" : ":bust_in_silhouette:")
-
-    // 📝 Construir mensaje
+    // Construir mensaje base
     def message = ""
     if (isStart) {
         message = ":rocket: *${jobName}* #${buildNumber} ha iniciado\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
@@ -57,18 +62,18 @@ def call(Map config = [:]) {
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
 
-    // 🔎 Logs si falla
+    // Logs en caso de fallo
     if (includeLog && !isStart && result == 'FAILURE') {
         try {
-            def rawLog = currentBuild.rawBuild.getLog(2000)
+            def rawLog = currentBuild.rawBuild.getLog(3000)
             def errorIndex = rawLog.findIndexOf { it =~ /(?i)(error|exception|failed|traceback|unknown revision)/ }
             if (errorIndex != -1) {
                 def start = Math.max(0, errorIndex - 20)
                 def end = Math.min(rawLog.size() - 1, errorIndex + 20)
-                def highlightedLog = rawLog[start..end].collectIndexed { idx, line ->
-                    idx + start == errorIndex ? "👉 ${line}" : line
-                }.join('\n').take(2000)
-                message += "\n```🔎 Primer error detectado:\n${highlightedLog}\n```"
+                def logLines = rawLog[start..end].collect { line ->
+                    line == rawLog[errorIndex] ? "👉 ${line}" : line
+                }
+                message += "\n```🔎 Primer error detectado:\n${logLines.join('\n').take(2000)}\n```"
             } else {
                 message += "\n```(No se detectó error específico)\n${rawLog.takeRight(100).join('\n')}```"
             }
@@ -77,9 +82,9 @@ def call(Map config = [:]) {
         }
     }
 
-    // 🎨 Color según estado
+    // Color según estado
     if (isStart) {
-        color = "#FBBF24"
+        color = "#FBBF24" // Amarillo inicio
     } else if (result == 'FAILURE') {
         color = "danger"
     } else if (result == 'ABORTED') {
@@ -88,7 +93,7 @@ def call(Map config = [:]) {
         color = "good"
     }
 
-    // 📢 Enviar a Slack
+    // Enviar mensaje a Slack
     slackSend(
         channel: channel,
         color: color,
