@@ -32,60 +32,72 @@ def call(Map config = [:]) {
     // Método 1: Buscar en las causas del build (cause text)
     try {
         def causes = currentBuild.rawBuild.getCauses()
-        echo "🔍 Analizando ${causes.size()} causas del build..."
+        echo "🔍 DEBUG: Analizando ${causes.size()} causas del build..."
         
         causes.each { cause ->
-            // Obtener el short description que es donde viene el cause text
+            // Obtener el short description
             def causeText = cause.getShortDescription() ?: ''
-            echo "   Causa: ${causeText}"
+            echo "🔍 DEBUG: Causa encontrada: '${causeText}'"
+            echo "🔍 DEBUG: Tipo de causa: ${cause.getClass().getName()}"
             
-            // Buscar formato especial: "Started by SLACK_DEPLOY|usuario|origen"
-            // Jenkins agrega "Started by" al inicio del cause text
+            // Buscar SLACK_DEPLOY en el texto
             if (causeText.contains('SLACK_DEPLOY')) {
-                echo "   ✓ Detectado SLACK_DEPLOY en causa"
+                echo "🔍 DEBUG: ¡Encontrado SLACK_DEPLOY en causa!"
                 
-                // Extraer todo después de "SLACK_DEPLOY"
-                def slackPart = causeText.substring(causeText.indexOf('SLACK_DEPLOY'))
-                
-                // Parsear: SLACK_DEPLOY|usuario|origen
-                def parts = slackPart.split('\\|')
-                if (parts.size() >= 2) {
-                    slackUser = parts[1].trim()
-                    triggeredFrom = parts.size() >= 3 ? parts[2].trim() : 'slack'
-                    echo "   ✅ Usuario extraído: ${slackUser} (${triggeredFrom})"
+                // Buscar el patrón SLACK_DEPLOY|usuario|origen
+                def matcher = causeText =~ /SLACK_DEPLOY\|([^|]+)\|([^|]+)/
+                if (matcher.find()) {
+                    slackUser = matcher.group(1).trim()
+                    triggeredFrom = matcher.group(2).trim()
+                    echo "✅ DEBUG: Usuario extraído con regex: '${slackUser}' origen: '${triggeredFrom}'"
+                } else {
+                    echo "⚠️ DEBUG: Pattern SLACK_DEPLOY encontrado pero regex no matcheó"
+                    echo "⚠️ DEBUG: Texto completo: ${causeText}"
                 }
             }
         }
+        
+        if (!slackUser) {
+            echo "⚠️ DEBUG: No se encontró usuario de Slack en las causas"
+        }
     } catch (e) {
-        echo "⚠️ Error leyendo causas: ${e.message}"
+        echo "❌ DEBUG: Error leyendo causas: ${e.message}"
+        e.printStackTrace()
     }
     
     // Método 2: Intentar buildVariables (si se usó buildWithParameters)
     if (!slackUser) {
         try {
             def buildVars = currentBuild.buildVariables ?: [:]
+            echo "🔍 DEBUG: buildVariables disponibles: ${buildVars.keySet()}"
             slackUser = buildVars.SLACK_USER
             triggeredFrom = buildVars.TRIGGERED_FROM ?: 'manual'
             if (slackUser) {
-                echo "📱 Usuario detectado desde buildVariables: ${slackUser}"
+                echo "✅ DEBUG: Usuario detectado desde buildVariables: ${slackUser}"
             }
         } catch (e) {
-            // Ignorar error
+            echo "⚠️ DEBUG: Error leyendo buildVariables: ${e.message}"
         }
     }
     
     // Método 3: Fallback a params/env
     if (!slackUser || slackUser == 'jenkins-user') {
+        echo "🔍 DEBUG: Intentando params/env como fallback"
         slackUser = params?.SLACK_USER ?: env.SLACK_USER ?: null
         triggeredFrom = params?.TRIGGERED_FROM ?: env.TRIGGERED_FROM ?: 'manual'
+        if (slackUser) {
+            echo "✅ DEBUG: Usuario desde params/env: ${slackUser}"
+        }
     }
     
     // 👤 Determinar quién disparó el pipeline
+    echo "🔍 DEBUG: Usuario final antes de decidir: '${slackUser}'"
+    
     if (slackUser && slackUser != 'jenkins-user') {
         // ✨ Usuario viene de Slack
         triggeredBy = slackUser
         emoji = ":slack:"
-        echo "✅ Usuario final de Slack: ${slackUser}"
+        echo "✅ FINAL: Usando usuario de Slack: ${slackUser}"
     } else {
         // Lógica original para detectar usuario
         try {
