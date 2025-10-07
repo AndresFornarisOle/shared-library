@@ -32,20 +32,32 @@ def call(Map config = [:]) {
     // Método 1: Buscar en las causas del build (cause text)
     try {
         def causes = currentBuild.rawBuild.getCauses()
+        echo "🔍 Analizando ${causes.size()} causas del build..."
+        
         causes.each { cause ->
+            // Obtener el short description que es donde viene el cause text
             def causeText = cause.getShortDescription() ?: ''
-            // Buscar formato especial: "SLACK_DEPLOY|usuario|origen"
-            if (causeText.contains('SLACK_DEPLOY|')) {
-                def parts = causeText.split('\\|')
+            echo "   Causa: ${causeText}"
+            
+            // Buscar formato especial: "Started by SLACK_DEPLOY|usuario|origen"
+            // Jenkins agrega "Started by" al inicio del cause text
+            if (causeText.contains('SLACK_DEPLOY')) {
+                echo "   ✓ Detectado SLACK_DEPLOY en causa"
+                
+                // Extraer todo después de "SLACK_DEPLOY"
+                def slackPart = causeText.substring(causeText.indexOf('SLACK_DEPLOY'))
+                
+                // Parsear: SLACK_DEPLOY|usuario|origen
+                def parts = slackPart.split('\\|')
                 if (parts.size() >= 2) {
-                    slackUser = parts[1]
-                    triggeredFrom = parts.size() >= 3 ? parts[2] : 'slack'
-                    echo "📱 Usuario detectado desde cause: ${slackUser}"
+                    slackUser = parts[1].trim()
+                    triggeredFrom = parts.size() >= 3 ? parts[2].trim() : 'slack'
+                    echo "   ✅ Usuario extraído: ${slackUser} (${triggeredFrom})"
                 }
             }
         }
     } catch (e) {
-        // Ignorar error
+        echo "⚠️ Error leyendo causas: ${e.message}"
     }
     
     // Método 2: Intentar buildVariables (si se usó buildWithParameters)
