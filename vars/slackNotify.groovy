@@ -25,23 +25,44 @@ def call(Map config = [:]) {
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
-    // ✨ NUEVO: Detectar si viene usuario de Slack (de múltiples fuentes)
+    // ✨ NUEVO: Detectar si viene usuario de Slack desde múltiples fuentes
     def slackUser = null
     def triggeredFrom = 'manual'
     
-    // Intentar obtener de buildVariables (viene de la Lambda aunque no esté en parameters)
+    // Método 1: Buscar en las causas del build (cause text)
     try {
-        def buildVars = currentBuild.buildVariables ?: [:]
-        slackUser = buildVars.SLACK_USER
-        triggeredFrom = buildVars.TRIGGERED_FROM ?: 'manual'
-        if (slackUser) {
-            echo "📱 Usuario detectado desde buildVariables: ${slackUser}"
+        def causes = currentBuild.rawBuild.getCauses()
+        causes.each { cause ->
+            def causeText = cause.getShortDescription() ?: ''
+            // Buscar formato especial: "SLACK_DEPLOY|usuario|origen"
+            if (causeText.contains('SLACK_DEPLOY|')) {
+                def parts = causeText.split('\\|')
+                if (parts.size() >= 2) {
+                    slackUser = parts[1]
+                    triggeredFrom = parts.size() >= 3 ? parts[2] : 'slack'
+                    echo "📱 Usuario detectado desde cause: ${slackUser}"
+                }
+            }
         }
     } catch (e) {
-        // Ignorar error si no existen
+        // Ignorar error
     }
     
-    // Fallback a params si están definidos explícitamente
+    // Método 2: Intentar buildVariables (si se usó buildWithParameters)
+    if (!slackUser) {
+        try {
+            def buildVars = currentBuild.buildVariables ?: [:]
+            slackUser = buildVars.SLACK_USER
+            triggeredFrom = buildVars.TRIGGERED_FROM ?: 'manual'
+            if (slackUser) {
+                echo "📱 Usuario detectado desde buildVariables: ${slackUser}"
+            }
+        } catch (e) {
+            // Ignorar error
+        }
+    }
+    
+    // Método 3: Fallback a params/env
     if (!slackUser || slackUser == 'jenkins-user') {
         slackUser = params?.SLACK_USER ?: env.SLACK_USER ?: null
         triggeredFrom = params?.TRIGGERED_FROM ?: env.TRIGGERED_FROM ?: 'manual'
@@ -52,7 +73,7 @@ def call(Map config = [:]) {
         // ✨ Usuario viene de Slack
         triggeredBy = slackUser
         emoji = ":slack:"
-        echo "📱 Usuario detectado desde Slack: ${slackUser}"
+        echo "✅ Usuario final de Slack: ${slackUser}"
     } else {
         // Lógica original para detectar usuario
         try {
