@@ -25,9 +25,27 @@ def call(Map config = [:]) {
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
-    // ✨ NUEVO: Detectar si viene usuario de Slack
-    def slackUser = params?.SLACK_USER ?: env.SLACK_USER ?: null
-    def triggeredFrom = params?.TRIGGERED_FROM ?: env.TRIGGERED_FROM ?: 'manual'
+    // ✨ NUEVO: Detectar si viene usuario de Slack (de múltiples fuentes)
+    def slackUser = null
+    def triggeredFrom = 'manual'
+    
+    // Intentar obtener de buildVariables (viene de la Lambda aunque no esté en parameters)
+    try {
+        def buildVars = currentBuild.buildVariables ?: [:]
+        slackUser = buildVars.SLACK_USER
+        triggeredFrom = buildVars.TRIGGERED_FROM ?: 'manual'
+        if (slackUser) {
+            echo "📱 Usuario detectado desde buildVariables: ${slackUser}"
+        }
+    } catch (e) {
+        // Ignorar error si no existen
+    }
+    
+    // Fallback a params si están definidos explícitamente
+    if (!slackUser || slackUser == 'jenkins-user') {
+        slackUser = params?.SLACK_USER ?: env.SLACK_USER ?: null
+        triggeredFrom = params?.TRIGGERED_FROM ?: env.TRIGGERED_FROM ?: 'manual'
+    }
     
     // 👤 Determinar quién disparó el pipeline
     if (slackUser && slackUser != 'jenkins-user') {
