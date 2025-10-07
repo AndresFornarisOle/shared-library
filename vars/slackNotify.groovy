@@ -1,5 +1,5 @@
 def call(Map config = [:]) {
-    def channel      = config.channel ?: '#tech-deploys'
+    def channel      = config.channel ?: '#tech-deploys-jenkins'
     def color        = config.color ?: 'good'
     def includeLog   = config.includeLog != null ? config.includeLog : true
     def buildUrl     = env.BUILD_URL ?: ''
@@ -25,29 +25,43 @@ def call(Map config = [:]) {
         buildDuration = "${(totalSeconds / 60).intValue()}m ${(totalSeconds % 60).intValue()}s"
     }
 
+    // ✨ NUEVO: Detectar si viene usuario de Slack
+    def slackUser = params?.SLACK_USER ?: env.SLACK_USER ?: null
+    def triggeredFrom = params?.TRIGGERED_FROM ?: env.TRIGGERED_FROM ?: 'manual'
+    
     // 👤 Determinar quién disparó el pipeline
-    try {
-        def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
-        if (userCause) {
-            triggeredBy = userCause.userName
-            emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":bust_in_silhouette:"
-        } else {
-            def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
-            if (gitAuthor) {
-                triggeredBy = "Git Push por ${gitAuthor}"
-                emoji = ":male-technologist:"
+    if (slackUser && slackUser != 'jenkins-user') {
+        // ✨ Usuario viene de Slack
+        triggeredBy = slackUser
+        emoji = ":slack:"
+        echo "📱 Usuario detectado desde Slack: ${slackUser}"
+    } else {
+        // Lógica original para detectar usuario
+        try {
+            def userCause = currentBuild.rawBuild.getCauses().find { it instanceof hudson.model.Cause$UserIdCause }
+            if (userCause) {
+                triggeredBy = userCause.userName
+                emoji = triggeredBy.toLowerCase() in ['admin', 'andres fornaris'] ? ":crown:" : ":bust_in_silhouette:"
+            } else {
+                def gitAuthor = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
+                if (gitAuthor) {
+                    triggeredBy = "Git Push por ${gitAuthor}"
+                    emoji = ":male-technologist:"
+                }
             }
+        } catch (e) {
+            triggeredBy = "Desconocido"
         }
-    } catch (e) {
-        triggeredBy = "Desconocido"
     }
 
     // 📝 Construir mensaje según el caso
     def message = ""
+    def sourceTag = triggeredFrom == 'slack' ? " _via Slack_" : ""
+    
     if (isStart) {
-        message = ":rocket: *${jobName}* #${buildNumber} ha iniciado\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
+        message = ":rocket: *${jobName}* #${buildNumber} ha iniciado${sourceTag}\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     } else {
-        message = "*${emoji} ${jobName}* #${buildNumber} terminó con estado: *${result}*"
+        message = "*${emoji} ${jobName}* #${buildNumber} terminó con estado: *${result}*${sourceTag}"
         if (buildDuration) message += "\n:stopwatch: *Duración:* ${buildDuration}"
         message += "\n:adult: Desplegado por: *${triggeredBy}* (<${buildUrl}|Ver ejecución>)"
     }
