@@ -27,64 +27,65 @@ def call(Map config = [:]) {
 
     // ✨ NUEVO: Detectar si viene usuario de Slack desde múltiples fuentes
     def slackUser = null
-    def triggeredFrom = 'manual'
+    def triggeredFrom = 'slack'
     
-    // Método 1: Buscar en las causas del build (cause text)
+    // Método 1: Leer de la descripción del build (donde Lambda lo inyecta)
     try {
-        def causes = currentBuild.rawBuild.getCauses()
-        echo "🔍 DEBUG: Analizando ${causes.size()} causas del build..."
+        def description = currentBuild.description ?: ''
+        echo "🔍 DEBUG: Descripción del build: '${description}'"
         
-        causes.each { cause ->
-            // Obtener el short description
-            def causeText = cause.getShortDescription() ?: ''
-            echo "🔍 DEBUG: Causa encontrada: '${causeText}'"
-            echo "🔍 DEBUG: Tipo de causa: ${cause.getClass().getName()}"
-            
-            // Buscar SLACK_DEPLOY en el texto
-            if (causeText.contains('SLACK_DEPLOY')) {
-                echo "🔍 DEBUG: ¡Encontrado SLACK_DEPLOY en causa!"
-                
-                // Buscar el patrón SLACK_DEPLOY|usuario|origen
-                def matcher = causeText =~ /SLACK_DEPLOY\|([^|]+)\|([^|]+)/
-                if (matcher.find()) {
-                    slackUser = matcher.group(1).trim()
-                    triggeredFrom = matcher.group(2).trim()
-                    echo "✅ DEBUG: Usuario extraído con regex: '${slackUser}' origen: '${triggeredFrom}'"
-                } else {
-                    echo "⚠️ DEBUG: Pattern SLACK_DEPLOY encontrado pero regex no matcheó"
-                    echo "⚠️ DEBUG: Texto completo: ${causeText}"
-                }
+        if (description.contains('SLACK_USER:')) {
+            // Extraer usuario: SLACK_USER:andres.fornaris
+            def matcher = description =~ /SLACK_USER:([^\s|]+)/
+            if (matcher.find()) {
+                slackUser = matcher.group(1).trim()
+                echo "✅ DEBUG: Usuario extraído de descripción: '${slackUser}'"
             }
         }
-        
-        if (!slackUser) {
-            echo "⚠️ DEBUG: No se encontró usuario de Slack en las causas"
-        }
     } catch (e) {
-        echo "❌ DEBUG: Error leyendo causas: ${e.message}"
-        e.printStackTrace()
+        echo "⚠️ DEBUG: Error leyendo descripción: ${e.message}"
     }
     
-    // Método 2: Intentar buildVariables (si se usó buildWithParameters)
+    // Método 2: Buscar en las causas del build (por si acaso)
+    if (!slackUser) {
+        try {
+            def causes = currentBuild.rawBuild.getCauses()
+            echo "🔍 DEBUG: Analizando ${causes.size()} causas del build..."
+            
+            causes.each { cause ->
+                def causeText = cause.getShortDescription() ?: ''
+                echo "🔍 DEBUG: Causa: '${causeText}'"
+                
+                if (causeText.contains('SLACK_DEPLOY')) {
+                    def matcher = causeText =~ /SLACK_DEPLOY\|([^|]+)\|([^|]+)/
+                    if (matcher.find()) {
+                        slackUser = matcher.group(1).trim()
+                        triggeredFrom = matcher.group(2).trim()
+                        echo "✅ DEBUG: Usuario extraído de causa: '${slackUser}'"
+                    }
+                }
+            }
+        } catch (e) {
+            echo "⚠️ DEBUG: Error leyendo causas: ${e.message}"
+        }
+    }
+    
+    // Método 3: Intentar buildVariables
     if (!slackUser) {
         try {
             def buildVars = currentBuild.buildVariables ?: [:]
-            echo "🔍 DEBUG: buildVariables disponibles: ${buildVars.keySet()}"
             slackUser = buildVars.SLACK_USER
-            triggeredFrom = buildVars.TRIGGERED_FROM ?: 'manual'
             if (slackUser) {
-                echo "✅ DEBUG: Usuario detectado desde buildVariables: ${slackUser}"
+                echo "✅ DEBUG: Usuario desde buildVariables: ${slackUser}"
             }
         } catch (e) {
-            echo "⚠️ DEBUG: Error leyendo buildVariables: ${e.message}"
+            // Ignorar
         }
     }
     
-    // Método 3: Fallback a params/env
+    // Método 4: Fallback a params/env
     if (!slackUser || slackUser == 'jenkins-user') {
-        echo "🔍 DEBUG: Intentando params/env como fallback"
         slackUser = params?.SLACK_USER ?: env.SLACK_USER ?: null
-        triggeredFrom = params?.TRIGGERED_FROM ?: env.TRIGGERED_FROM ?: 'manual'
         if (slackUser) {
             echo "✅ DEBUG: Usuario desde params/env: ${slackUser}"
         }
