@@ -30,9 +30,19 @@ def call(Map config = [:]) {
     def triggeredFrom = 'slack'
     
     // Método 1: Leer de la descripción del build (donde Lambda lo inyecta)
+    // Esperar un poco si estamos al inicio y la descripción está vacía
     try {
         def description = currentBuild.description ?: ''
-        echo "🔍 DEBUG: Descripción del build: '${description}'"
+        echo "🔍 DEBUG: Descripción inicial del build: '${description}'"
+        
+        // Si estamos al inicio del build y no hay descripción, esperar un poco
+        if (isStart && !description && currentBuild.number) {
+            echo "⏳ DEBUG: Esperando 4 segundos para que Lambda actualice la descripción..."
+            sleep(4)
+            // Refrescar la descripción
+            description = currentBuild.description ?: ''
+            echo "🔍 DEBUG: Descripción después de esperar: '${description}'"
+        }
         
         if (description.contains('SLACK_USER:')) {
             // Extraer usuario: SLACK_USER:andres.fornaris
