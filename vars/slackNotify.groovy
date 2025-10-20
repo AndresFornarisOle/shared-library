@@ -1,5 +1,5 @@
 def call(Map config = [:]) {
-    def channel      = config.channel ?: '#tech-deploys-jenkins'
+    def channel      = config.channel ?: '#tech-deploys'
     def color        = config.color ?: 'good'
     def includeLog   = config.includeLog != null ? config.includeLog : true
     def buildUrl     = env.BUILD_URL ?: ''
